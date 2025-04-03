@@ -6,7 +6,7 @@ from miraie_ac import Device as MirAIeDevice, MirAIeHub, ConsumptionPeriodType
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfEnergy
+from homeassistant.const import UnitOfEnergy, SIGNAL_STRENGTH_DECIBELS_MILLIWATT
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -149,6 +149,50 @@ class MirAIeMonthlyEnergySensor(MirAIeEnergySensor):
         if not getattr(self, "_attr_last_reset", None) or self._attr_last_reset < start_of_month:
             self._attr_last_reset = now
 
+class MirAIeSignalStrengthSensor(SensorEntity):
+    def __init__(self, hub: MirAIeHub, device: MirAIeDevice):
+        """Initialize the sensor."""
+        self.hub = hub
+        self.device = device
+        self._attr_name = f"{device.name} Network Signal Strength"
+        self._attr_unique_id = f"sensor.{device.name.lower()}_{device.id}_network_signal_strength"
+        self._attr_should_poll = False
+        self._attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_native_unit_of_measurement = SIGNAL_STRENGTH_DECIBELS_MILLIWATT
+        self._attr_suggested_display_precision = 0
+        self._attr_native_value = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return DeviceInfo(
+            identifiers={
+                # Serial numbers are unique identifiers within a specific domain
+                (DOMAIN, self.device.id)
+            },
+            name=self.device.friendly_name,
+            manufacturer=self.device.details.brand,
+            model=self.device.details.model_number,
+            sw_version=self.device.details.firmware_version,
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Run when this Entity has been added to HA."""
+        LOGGER.debug(f"Successfully added {self.name} to HA")
+        # Sensors should also register callbacks to HA when their state changes
+        self.device.register_callback(self._handle_device_update)
+
+    async def async_will_remove_from_hass(self):
+        """Entity being removed from hass."""
+        LOGGER.debug(f"Removing entity {self.name} from HA")
+        self.device.remove_callback(self._handle_device_update)
+
+    def _handle_device_update(self):
+        """Called when device status is updated."""
+        self._attr_native_value = self.device.status.signal_strength  # Update sensor's state
+        self.async_write_ha_state()  # Notify Home Assistant
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     """Set up MirAIe energy sensors from a config entry."""
@@ -159,6 +203,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             MirAIeDailyEnergySensor(hub, device),
             MirAIeWeeklyEnergySensor(hub, device),
             MirAIeMonthlyEnergySensor(hub, device),
+            MirAIeSignalStrengthSensor(hub, device),
         ]
     async_add_entities(sensors, update_before_add=True)  # Register sensors
 
